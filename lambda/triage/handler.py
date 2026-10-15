@@ -70,7 +70,7 @@ def cloudtrail_context(user, created_at):
 
 def triage(finding, context):
     body = {
-        "model": MODEL, "max_tokens": 1024, "system": SYSTEM,
+        "model": MODEL, "max_tokens": 2048, "system": SYSTEM,
         "tools": [TRIAGE_TOOL], "tool_choice": {"type": "auto"},
         "messages": [{"role": "user", "content": json.dumps(
             {"finding": finding, "recent_cloudtrail_activity": context})}],
@@ -86,9 +86,14 @@ def triage(finding, context):
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"HTTP {e.code}: {e.read().decode()[:400]}") from None
     latency = round(time.time() - t0, 2)
+    stop = resp.get("stop_reason")
+    print(json.dumps({"stop_reason": stop, "usage": resp.get("usage")}))
     tool = next((b for b in resp["content"] if b["type"] == "tool_use"), None)
     if tool is None:
-        raise RuntimeError("model did not call record_triage")
+        raise RuntimeError(f"model did not call record_triage (stop_reason={stop})")
+    missing = [f for f in TRIAGE_TOOL["input_schema"]["required"] if f not in tool["input"]]
+    if missing:
+        raise RuntimeError(f"incomplete triage, missing {missing} (stop_reason={stop})")
     return tool["input"], resp["usage"], latency
 
 def send_alert(item, result):
