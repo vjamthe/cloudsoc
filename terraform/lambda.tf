@@ -46,6 +46,16 @@ resource "aws_iam_role_policy" "triage" {
         Effect   = "Allow"
         Action   = ["dynamodb:PutItem"]
         Resource = aws_dynamodb_table.findings.arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = aws_secretsmanager_secret.anthropic.arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["cloudtrail:LookupEvents"]
+        Resource = "*"
       }
     ]
   })
@@ -58,9 +68,14 @@ resource "aws_lambda_function" "triage" {
   handler          = "handler.handler"
   filename         = data.archive_file.triage.output_path
   source_code_hash = data.archive_file.triage.output_base64sha256
-  timeout          = 30
+  timeout          = 60
+  memory_size      = 256
   environment {
-    variables = { TABLE_NAME = aws_dynamodb_table.findings.name }
+    variables = {
+      TABLE_NAME = aws_dynamodb_table.findings.name
+      SECRET_ID  = aws_secretsmanager_secret.anthropic.name
+      MODEL      = "claude-sonnet-5-5"
+    }
   }
   depends_on = [aws_cloudwatch_log_group.triage, aws_iam_role_policy.triage]
 }
