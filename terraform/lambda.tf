@@ -56,6 +56,11 @@ resource "aws_iam_role_policy" "triage" {
         Effect   = "Allow"
         Action   = ["cloudtrail:LookupEvents"]
         Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["sns:Publish"]
+        Resource = aws_sns_topic.alerts.arn
       }
     ]
   })
@@ -75,6 +80,8 @@ resource "aws_lambda_function" "triage" {
       TABLE_NAME = aws_dynamodb_table.findings.name
       SECRET_ID  = aws_secretsmanager_secret.anthropic.name
       MODEL      = "claude-sonnet-5-5"
+      ALERT_TOPIC_ARN  = aws_sns_topic.alerts.arn
+      ALERT_PRIORITIES = var.alert_priorities
     }
   }
   depends_on = [aws_cloudwatch_log_group.triage, aws_iam_role_policy.triage]

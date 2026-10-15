@@ -7,6 +7,7 @@ MODEL = os.environ.get("MODEL", "claude-sonnet-5-5")
 table = boto3.resource("dynamodb").Table(os.environ["TABLE_NAME"])
 sm = boto3.client("secretsmanager")
 ct = boto3.client("cloudtrail")
+sns = boto3.client("sns")
 _api_key = None
 
 SYSTEM = (
@@ -90,6 +91,20 @@ def triage(finding, context):
         raise RuntimeError("model did not call record_triage")
     return tool["input"], resp["usage"], latency
 
+def send_alert(item, result):
+    lines = [
+        f"Verdict: {result['verdict']} (confidence {result['confidence']})",
+        f"GuardDuty severity: {item['severity']}",
+        f"Principal: {item['principal']}",
+        f"Finding ID: {item['finding_id']}",
+        "", "Summary:", result["summary"],
+        "", "Blast radius:", result["blast_radius"],
+        "", "Recommended actions:",
+    ] + [f"- {a}" for a in result["recommended_actions"]]
+    sns.publish(TopicArn=os.environ["ALERT_TOPIC_ARN"],
+                Subject=f"[CloudSOC {result['priority']}] {item['type']}"[:100],
+                Message="\n".join(lines))
+
 def handler(event, context):
     d = event["detail"]
     user = principal(d)
@@ -114,6 +129,14 @@ def handler(event, context):
                           "verdict": result["verdict"], "priority": result["priority"],
                           "confidence": result["confidence"], "context_events": len(ctx),
                           "latency_s": latency, "summary": result["summary"]}))
+        item["alerted"] = False
+        if result["priority"] in os.environ.get("ALERT_PRIORITIES", "P1,P2").split(","):
+            try:
+                send_alert(item, result)
+                item["alerted"] = True
+                print(f"alert sent for {item['finding_id']}")
+            except Exception as e:
+                print(f"alert failed for {item['finding_id']}: {e}")
     except Exception as e:
         item.update(status="TRIAGE_FAILED", error=str(e)[:500])
         print(f"triage failed for {item['finding_id']}: {e}")
