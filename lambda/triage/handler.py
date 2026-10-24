@@ -45,15 +45,22 @@ def api_key():
     return _api_key
 
 def principal(d):
-    return d.get("resource", {}).get("accessKeyDetails", {}).get("userName")
+    ak = d.get("resource", {}).get("accessKeyDetails", {})
+    name = ak.get("userName")
+    if ak.get("userType") == "AssumedRole" and ak.get("accessKeyId"):
+        return {"lookup_key": "AccessKeyId", "lookup_value": ak["accessKeyId"], "label": name}
+    if name:
+        return {"lookup_key": "Username", "lookup_value": name, "label": name}
+    return None
 
 def cloudtrail_context(user, created_at):
     if not user:
         return []
+    lookup_key, lookup_value = user["lookup_key"], user["lookup_value"]
     end = datetime.fromisoformat(created_at.replace("Z", "+00:00")) if created_at else datetime.now(timezone.utc)
     try:
         resp = ct.lookup_events(
-            LookupAttributes=[{"AttributeKey": "Username", "AttributeValue": user}],
+            LookupAttributes=[{"AttributeKey": lookup_key, "AttributeValue": lookup_value}],
             StartTime=end - timedelta(hours=6), EndTime=end + timedelta(minutes=5), MaxResults=25)
     except Exception as e:
         print(f"cloudtrail lookup failed: {e}")
@@ -114,11 +121,12 @@ def handler(event, context):
     d = event["detail"]
     user = principal(d)
     ctx = cloudtrail_context(user, d.get("createdAt"))
+    user_label = user["label"] if user else None
     item = {
         "finding_id": d["id"], "type": d["type"],
         "severity": Decimal(str(d["severity"])), "title": d.get("title", ""),
         "resource_type": d.get("resource", {}).get("resourceType", "unknown"),
-        "principal": user or "none", "region": d.get("region", event.get("region", "")),
+        "principal": user_label or "none", "region": d.get("region", event.get("region", "")),
         "created_at": d.get("createdAt", ""),
         "is_sample": bool(d.get("service", {}).get("additionalInfo", {}).get("sample", False)),
         "context_events": len(ctx), "raw": json.dumps(d),
